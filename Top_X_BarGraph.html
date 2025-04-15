@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Top Countries Comparison - LTBI Data</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        /* Copy relevant styles from Dashboard2.html */
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            background-color: #0a0c10;
+            color: #e6e8eb;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .controls {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        /* ...copy other relevant styles... */
+
+        /* Fullscreen specific styles */
+        #top-countries-chart {
+            width: 100%;
+            height: 80vh;
+        }
+
+        .back-button {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            border-radius: 5px;
+            color: white;
+            cursor: pointer;
+        }
+
+        /* Add tooltip styles */
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 8px;
+            border-radius: 4px;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <button onclick="window.location.href='Dashboard2.html'" class="back-button">← Back to Dashboard</button>
+    <h1>Top Countries Comparison</h1>
+    <div class="controls">
+        <label for="yearRange">Year: <span id="yearLabel"></span></label>
+        <input type="range" id="yearRange">
+        <label for="topXSelect">Top X Countries:</label>
+        <select id="topXSelect">
+            <option value="5">Top 5</option>
+            <option value="10">Top 10</option>
+            <option value="15">Top 15</option>
+        </select>
+        <button id="animateButton"><span class="icon">▶</span><span class="text">Animate Years</span></button>
+    </div>
+    <div id="top-countries-chart"></div>
+    <div class="tooltip"></div>
+    <script>
+    // Add color scheme definition
+    const blueColorScheme = d3.schemeBlues[9];
+    
+    // Create tooltip
+    const tooltip = d3.select(".tooltip");
+
+    d3.csv("processed_LTBI_dataset.csv").then(data => {
+        // Prepare data
+        data.forEach(d => {
+          d.Year = +d.Year;
+          d.Metric = +d.Metric;
+        });
+  
+        const years = Array.from(new Set(data.map(d => d.Year))).sort((a, b) => a - b);
+        const colorScale = d3.scaleOrdinal(blueColorScheme);
+  
+        const margin = { top: 20, right: 30, bottom: 50, left: 150 };
+        const width = 800 - margin.left - margin.right;
+        const height = 500 - margin.top - margin.bottom;
+  
+        const svg = d3.select("#top-countries-chart")
+          .append("svg")
+          .attr("viewBox", `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`)
+          .attr("preserveAspectRatio", "xMidYMid meet")
+          .append("g")
+          .attr("transform", `translate(${margin.left},${margin.top})`);
+  
+        const xScale = d3.scaleLinear()
+          .range([0, width]);
+  
+        const yScale = d3.scaleBand()
+          .range([0, height])
+          .padding(0.1);
+  
+        const xAxis = svg.append("g")
+          .attr("transform", `translate(0,0)`);
+  
+        const yAxis = svg.append("g");
+  
+        function updateChart(year, topX) {
+          const filteredData = data.filter(d => d.Year === year);
+          const topCountries = filteredData.sort((a, b) => b.Metric - a.Metric).slice(0, topX);
+  
+          xScale.domain([0, d3.max(topCountries, d => d.Metric)]);
+          yScale.domain(topCountries.map(d => d.Country));
+  
+          xAxis.transition().duration(500).call(d3.axisTop(xScale).ticks(5));
+          yAxis.transition().duration(500).call(d3.axisLeft(yScale));
+  
+          // DATA JOIN
+          const bars = svg.selectAll(".bar")
+            .data(topCountries, d => d.Country);
+  
+          // EXIT
+          bars.exit()
+            .transition().duration(500)
+            .attr("width", 0)
+            .remove();
+  
+          // UPDATE
+          bars.transition().duration(500)
+            .attr("y", d => yScale(d.Country))
+            .attr("width", d => xScale(d.Metric))
+            .attr("height", yScale.bandwidth());
+  
+          // ENTER
+          bars.enter().append("rect")
+            .attr("class", "bar")
+            .attr("y", d => yScale(d.Country))
+            .attr("width", 0)
+            .attr("height", yScale.bandwidth())
+            .attr("fill", d => colorScale(d.Country))
+            .on("click", (event, d) => showCountryDetails(d.Country))
+            .on("mouseover", function(event, d) {
+              tooltip.style("display", "block")
+                .html(`<strong>${d.Country}</strong><br>Year: ${d.Year}<br>Metric: ${d.Metric}`)
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+            })
+            .on("mouseout", () => tooltip.style("display", "none"))
+            .transition().duration(500)
+            .attr("width", d => xScale(d.Metric));
+        }
+  
+        // Function to show detailed bar chart for a country
+        function showCountryDetails(country) {
+          const countryData = data.filter(d => d.Country === country);
+          // Create a modal or a new section to display the detailed bar chart for the country
+          // For simplicity, we'll log the country data to console
+          console.log(`Detailed data for ${country}:`, countryData);
+          // You can implement a modal or redirect to a detailed view as needed
+        }
+  
+        // Handle year range input change
+        const yearRange = d3.select("#yearRange");
+        const yearLabel = d3.select("#yearLabel");
+        yearRange.attr("min", d3.min(years)).attr("max", d3.max(years)).attr("value", d3.min(years));
+  
+        yearRange.on("input", function() {
+          const selectedYear = +this.value;
+          yearLabel.text(selectedYear);
+          const topX = +d3.select("#topXSelect").node().value;
+          updateChart(selectedYear, topX);
+        });
+  
+        // Handle top X selection change
+        d3.select("#topXSelect").on("change", function() {
+          const selectedYear = +yearRange.node().value;
+          const topX = +this.value;
+          updateChart(selectedYear, topX);
+        });
+  
+        let isAnimating = false;
+        let animationTimer = null;
+  
+        // Add animation control function
+        function toggleAnimation() {
+          const button = d3.select("#animateButton");
+          
+          if (isAnimating) {
+            // Stop animation
+            if (animationTimer) clearInterval(animationTimer);
+            button.html('<span class="icon">▶</span><span class="text">Animate Years</span>')
+              .classed("playing", false);
+            isAnimating = false;
+          } else {
+            // Start animation
+            button.html('<span class="icon">⏹</span><span class="text">Stop Animation</span>')
+              .classed("playing", true);
+            isAnimating = true;
+            
+            let currentYear = +yearRange.node().value;
+            const maxYear = +yearRange.attr("max");
+            const minYear = +yearRange.attr("min");
+            
+            // Update every second
+            animationTimer = setInterval(() => {
+              currentYear++;
+              if (currentYear > maxYear) {
+                currentYear = minYear;
+              }
+              
+              yearRange.node().value = currentYear;
+              yearLabel.text(currentYear);
+              updateChart(currentYear, +d3.select("#topXSelect").node().value);
+            }, 1000);
+          }
+        }
+  
+        // Add click handler for animation button
+        d3.select("#animateButton").on("click", toggleAnimation);
+  
+        // Modify existing event handlers to stop animation when manually changing values
+        yearRange.on("input", function() {
+          if (isAnimating) toggleAnimation(); // Stop animation if running
+          const selectedYear = +this.value;
+          yearLabel.text(selectedYear);
+          const topX = +d3.select("#topXSelect").node().value;
+          updateChart(selectedYear, topX);
+        });
+  
+        d3.select("#topXSelect").on("change", function() {
+          if (isAnimating) toggleAnimation(); // Stop animation if running
+          const selectedYear = +yearRange.node().value;
+          const topX = +this.value;
+          updateChart(selectedYear, topX);
+        });
+  
+        // Clean up animation when leaving the page
+        window.addEventListener('beforeunload', () => {
+          if (animationTimer) clearInterval(animationTimer);
+        });
+  
+        // Initialize chart
+        const initialYear = +yearRange.node().value;
+        const initialTopX = +d3.select("#topXSelect").node().value;
+        updateChart(initialYear, initialTopX);
+      }).catch(error => console.error("Error loading or processing data:", error));
+    </script>
+</body>
+</html>

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dynamic Graph with Filters</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    :root {
+      /* Dark theme (default) */
+      --bg-color: #0a0c10;
+      --section-bg: linear-gradient(145deg, #151920, #1a1f27);
+      --text-color: #e6e8eb;
+      --control-bg: rgba(255, 255, 255, 0.03);
+      --border-color: rgba(255, 255, 255, 0.05);
+      --tooltip-bg: rgba(24, 28, 36, 0.95);
+    }
+
+    :root[data-theme="light"] {
+      --bg-color: #f5f7fa;
+      --section-bg: linear-gradient(145deg, #ffffff, #f0f2f5);
+      --text-color: #2c3e50;
+      --control-bg: rgba(0, 0, 0, 0.03);
+      --border-color: rgba(0, 0, 0, 0.05);
+      --tooltip-bg: rgba(255, 255, 255, 0.95);
+    }
+
+    /* Update existing styles with variables */
+    body {
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+    }
+    #controls {
+      text-align: center;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    #chart {
+      width: 100%;
+      height: 85vh;
+    }
+    .tooltip {
+      position: absolute;
+      text-align: center;
+      padding: 5px;
+      background: lightgray;
+      border: 1px solid gray;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+    }
+    .node {
+      cursor: pointer;
+      stroke: var(--border-color);
+    }
+    .node:hover {
+      stroke: black;
+      stroke-width: 2px;
+    }
+    .link {
+      stroke: var(--border-color);
+      stroke-width: 1;
+      opacity: 0.7;
+    }
+
+    /* Add theme toggle button styles */
+  </style>
+</head>
+<body>
+  <button class="theme-toggle" id="themeToggle">🌓 Toggle Theme</button>
+  <div id="controls">
+    <select id="nodeSizeMetric">
+      <option value="Average_Household_Size">Average Household Size</option>
+      <option value="Metric">Metric Value</option>
+    </select>
+    <select id="relationshipType">
+      <option value="WHO_Region">WHO Region</option>
+      <option value="Region">Region</option>
+      <option value="Subregion">Subregion</option>
+      <option value="Income_Level">Income Level</option>
+    </select>
+    <button id="exportGraphBtn">Export Graph</button>
+  </div>
+  <div id="graphLegend"></div>
+  <div id="chart"></div>
+  <div class="tooltip"></div>
+
+  <script>
+    // Add at start of script
+    const themeToggle = document.getElementById('themeToggle');
+    const root = document.documentElement;
+
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    root.setAttribute('data-theme', savedTheme);
+
+    themeToggle.addEventListener('click', () => {
+        const currentTheme = root.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        root.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        updateGraphColors();
+    });
+
+    function updateGraphColors() {
+        const currentTheme = root.getAttribute('data-theme');
+        const colors = currentTheme === 'light' ? 
+            d3.schemeSet3 : 
+            ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22'];
+        
+        edgeColors.range(colors);
+        // Re-render the graph
+        updateGraph(
+            nodeSizeMetricSelect.node().value,
+            relationshipTypeSelect.node().value
+        );
+    }
+
+    // Initialize variables
+    const widthGraph = document.getElementById('chart').clientWidth;
+    const heightGraph = document.getElementById('chart').clientHeight;
+    const svgGraph = d3.select("#chart")
+      .append("svg")
+      .attr("width", widthGraph)
+      .attr("height", heightGraph);
+    const graphContainer = svgGraph.append("g");
+    const tooltip = d3.select(".tooltip");
+    
+    // Load saved settings
+    const savedSettings = JSON.parse(localStorage.getItem('dashboardSettings') || '{}');
+
+    d3.csv("processed_LTBI_dataset.csv").then(data => {
+      // Preprocess data
+      const nodes = [];
+      const nodeMap = new Map();
+      const links = [];
+      const relationshipTypes = ["WHO_Region", "Region", "Subregion", "Income_Level"];
+      const edgeColors = d3.scaleOrdinal(d3.schemeCategory10);
+
+      // Function to create nodes and edges based on selected relationship
+      function updateGraph(nodeSizeMetric, relationshipType) {
+        nodes.length = 0;
+        links.length = 0;
+        nodeMap.clear();
+
+        // Create nodes
+        data.forEach(d => {
+          if (!nodeMap.has(d.Country)) {
+            nodeMap.set(d.Country, {
+              id: d.Country,
+              group: d.WHO_Region,
+              sizeMetric: +d[nodeSizeMetric] || 1,
+              info: {
+                Region: d.Region,
+                Subregion: d['Sub-region'],
+                Income_Level: d['Income Level'],
+                Average_Household_Size: +d.Average_Household_Size || 0,
+                Metric: +d.Metric || 0
+              }
+            });
+          }
+        });
+
+        nodes.push(...nodeMap.values());
+
+        // Create edges
+        nodes.forEach(sourceNode => {
+          nodes.forEach(targetNode => {
+            if (sourceNode !== targetNode && sourceNode.info[relationshipType] === targetNode.info[relationshipType]) {
+              links.push({
+                source: sourceNode.id,
+                target: targetNode.id,
+                type: relationshipType
+              });
+            }
+          });
+        });
+
+        renderGraph(nodeSizeMetric, relationshipType);
+      }
+
+      // Render the graph
+      function renderGraph(nodeSizeMetric, relationshipType) {
+        graphContainer.selectAll('*').remove();
+
+        const simulation = d3.forceSimulation(nodes)
+          .force("link", d3.forceLink(links)
+            .id(d => d.id)
+            .distance(50))
+          .force("charge", d3.forceManyBody().strength(-50))
+          .force("center", d3.forceCenter(widthGraph / 2, heightGraph / 2))
+          .force("collision", d3.forceCollide().radius(d => d.size));
+
+        // Create links
+        const link = graphContainer.append("g")
+          .attr("stroke", "#999")
+          .attr("stroke-opacity", 0.6)
+          .selectAll("line")
+          .data(links)
+          .enter().append("line")
+          .attr("stroke", d => edgeColors(relationshipTypes.indexOf(d.type)));
+
+        // Create nodes
+        const node = graphContainer.append("g")
+          .attr("stroke", "#fff")
+          .attr("stroke-width", 1.5)
+          .selectAll("g")
+          .data(nodes)
+          .enter().append("g")
+          .call(d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended));
+
+        node.append("circle")
+          .attr("r", d => d.sizeMetric)
+          .attr("fill", d => edgeColors(relationshipTypes.indexOf("WHO_Region") + d.group));
+
+        node.append("title")
+          .text(d => `${d.id}
+Region: ${d.info.Region}
+Sub-region: ${d.info.Subregion}
+Income Level: ${d.info.Income_Level}
+Average Household Size: ${d.info.Average_Household_Size}
+Metric: ${d.info.Metric}`);
+
+        node.on("mouseover", function(event, d) {
+            tooltip.style("display", "block")
+              .html(`<strong>${d.id}</strong><br>
+Region: ${d.info.Region}<br>
+Sub-region: ${d.info.Subregion}<br>
+Income Level: ${d.info.Income_Level}<br>
+Average Household Size: ${d.info.Average_Household_Size}<br>
+Metric: ${d.info.Metric}<br>
+Connected Countries: ${links.filter(l => l.source.id === d.id || l.target.id === d.id).length}`)
+              .style("left", (event.pageX + 10) + "px")
+              .style("top", (event.pageY - 28) + "px");
+          })
+          .on("mouseout", function() {
+            tooltip.style("display", "none");
+          })
+          .on("click", function(event, d) {
+            updateSelectedCountry(d.id);
+          });
+
+        simulation.on("tick", () => {
+          link
+            .attr("x1", d => d.source.x)
+            .attr("y1", d => d.source.y)
+            .attr("x2", d => d.target.x)
+            .attr("y2", d => d.target.y);
+
+          node
+            .attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        // Update function for filtering
+        function updateVisibility() {
+          const selectedRelationship = relationshipTypeSelect.node().value;
+          const selectedNodeSizeMetric = nodeSizeMetricSelect.node().value;
+          updateGraph(selectedNodeSizeMetric, selectedRelationship);
+          saveSettings();
+        }
+
+        relationshipTypeSelect.on("change", updateVisibility);
+        nodeSizeMetricSelect.on("change", updateVisibility);
+      }
+
+      // Drag functions
+      function dragstarted(event) {
+        if (!event.active) event.subject.fx = event.subject.x;
+        event.subject.fy = event.subject.y;
+      }
+
+      function dragged(event) {
+        event.subject.fx = event.x;
+        event.subject.fy = event.y;
+      }
+
+      function dragended(event) {
+        if (!event.active) {
+          event.subject.fx = null;
+          event.subject.fy = null;
+        }
+      }
+
+      // Setup filters
+      const nodeSizeMetricSelect = d3.select("#nodeSizeMetric");
+      const relationshipTypeSelect = d3.select("#relationshipType");
+
+      updateGraph(nodeSizeMetricSelect.node().value, relationshipTypeSelect.node().value);
+
+      // Handle country selection events
+      window.addEventListener('countrySelected', (e) => {
+        const country = e.detail;
+        graphContainer.selectAll("circle")
+          .attr("stroke-width", d => d.id === country ? 3 : 1.5)
+          .attr("stroke", d => d.id === country ? "#ff0" : "#fff");
+      });
+
+      // Implement Advanced Filtering Options
+      const filterControls = d3.select(".controls").append("div").attr("class", "filter-controls");
+      filterControls.append("label").text("Minimum Metric Value:");
+      filterControls.append("input").attr("type", "number").attr("id", "minMetricValue").attr("value", savedSettings.minMetricValue || 0);
+
+      // Implement Dynamic and Interactive Legend
+      const legend = d3.select("#graphLegend");
+      const regions = Array.from(new Set(data.map(d => d.WHO_Region)));
+      const colorScale = d3.scaleOrdinal(d3.schemeCategory10).domain(regions);
+
+      regions.forEach(region => {
+        const legendItem = legend.append("div").attr("class", "legend-item");
+        legendItem.append("div")
+          .attr("class", "legend-color")
+          .style("background-color", colorScale(region));
+        legendItem.append("span").text(region);
+        legendItem.on("click", () => {
+          // Toggle visibility
+          const isActive = !legendItem.classed("inactive");
+          legendItem.classed("inactive", isActive);
+          graphContainer.selectAll("circle")
+            .filter(d => d.group === region)
+            .transition().duration(500)
+            .style("opacity", isActive ? 0 : 1);
+        });
+      });
+
+      // Save settings to localStorage
+      function saveSettings() {
+        const settings = {
+          nodeSizeMetric: nodeSizeMetricSelect.node().value,
+          relationshipType: relationshipTypeSelect.node().value,
+          minMetricValue: d3.select("#minMetricValue").node().value
+        };
+        localStorage.setItem('dashboardSettings', JSON.stringify(settings));
+      }
+
+      // Load saved settings
+      if (savedSettings.nodeSizeMetric) {
+        nodeSizeMetricSelect.node().value = savedSettings.nodeSizeMetric;
+      }
+      if (savedSettings.relationshipType) {
+        relationshipTypeSelect.node().value = savedSettings.relationshipType;
+      }
+
+      // Implement Export Functionality
+      d3.select("#exportGraphBtn").on("click", function() {
+        const svgData = new XMLSerializer().serializeToString(svgGraph.node());
+        const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+        const url = URL.createObjectURL(svgBlob);
+        const downloadLink = document.createElement("a");
+        downloadLink.href = url;
+        downloadLink.download = "graph_export.svg";
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+      });
+
+      // Add theme switching code as shown above
+      function updateGraphColors(theme) {
+          const colorScheme = theme === 'light' ? 
+              d3.schemeSet3 : d3.schemeDark2;
+          edgeColors.range(colorScheme);
+          updateGraph(
+              nodeSizeMetricSelect.node().value,
+              relationshipTypeSelect.node().value
+          );
+      }
+    }).catch(error => console.error("Error loading or processing data:", error));
+  </script>
+</body>
+</html>

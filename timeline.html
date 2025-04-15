@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bar Chart Timeline Visualization</title>
+  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <style>
+    :root {
+      /* Dark theme (default) */
+      --bg-color: #0a0c10;
+      --section-bg: linear-gradient(145deg, #151920, #1a1f27);
+      --text-color: #e6e8eb;
+      --control-bg: rgba(255, 255, 255, 0.03);
+      --border-color: rgba(255, 255, 255, 0.05);
+      --tooltip-bg: rgba(24, 28, 36, 0.95);
+    }
+
+    :root[data-theme="light"] {
+      --bg-color: #f5f7fa;
+      --section-bg: linear-gradient(145deg, #ffffff, #f0f2f5);
+      --text-color: #2c3e50;
+      --control-bg: rgba(0, 0, 0, 0.03);
+      --border-color: rgba(0, 0, 0, 0.05);
+      --tooltip-bg: rgba(255, 255, 255, 0.95);
+    }
+
+    body {
+      font-family: 'Inter', 'Segoe UI', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      margin: 0;
+      padding: 20px;
+      transition: all 0.3s ease;
+    }
+
+    #controls {
+      background: var(--control-bg);
+      padding: 15px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      backdrop-filter: blur(10px);
+    }
+
+    #chart-bar {
+      width: 100%;
+      height: 600px;  /* Explicit height */
+      position: relative;
+    }
+
+    .tooltip {
+      position: absolute;
+      text-align: center;
+      padding: 8px;
+      background: var(--tooltip-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      pointer-events: none;
+      font-size: 12px;
+      color: var(--text-color);
+    }
+
+    .theme-toggle {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      background: var(--control-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-color);
+      cursor: pointer;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+    <button class="theme-toggle" id="themeToggle">🌓 Toggle Theme</button>
+    <div id="controls">
+        <select id="countryFilterBar">
+            <option value="All">All Countries</option>
+        </select>
+        <select id="metricFilter">
+            <option value="Estimated_Household_Contacts">Estimated Household Contacts</option>
+            <option value="Prev_Treatment_Contacts_Pct">Previous Treatment Contacts %</option>
+            <option value="Prev_Treatment_Kids_Pct">Previous Treatment Kids %</option>
+        </select>
+    </div>
+    
+    <div id="chart-bar"></div>
+    <div class="tooltip"></div>
+
+    <script>
+        // Add theme switching functionality
+        const themeToggle = document.getElementById('themeToggle');
+        const root = document.documentElement;
+        
+        // Load saved theme preference
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        root.setAttribute('data-theme', savedTheme);
+
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = root.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            root.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateChartColors(newTheme);
+        });
+
+        function updateChartColors(theme) {
+            const colorScheme = theme === 'light' ? d3.schemeBlues[9] : d3.schemeDark2;
+            colorScale.range(colorScheme);
+            // Re-render the chart with new colors
+            const selectedCountry = d3.select("#countryFilterBar").property("value");
+            const selectedMetric = d3.select("#metricFilter").property("value");
+            const filteredData = selectedCountry === "All" ? data : data.filter(d => d.Country === selectedCountry);
+            renderChart(filteredData, selectedMetric);
+        }
+
+        // Set fixed dimensions for the chart
+        const widthBar = 1000;  // Fixed width
+        const heightBar = 500;  // Fixed height
+        const margin = { top: 20, right: 30, bottom: 50, left: 60 };
+        const tooltip = d3.select(".tooltip");
+
+        const svgBar = d3.select("#chart-bar")
+            .append("svg")
+            .attr("width", widthBar)
+            .attr("height", heightBar)
+            .style("max-width", "100%")
+            .style("height", "auto");
+
+        d3.csv("processed_LTBI_dataset.csv").then(data => {
+            data.forEach(d => {
+                d.Year = +d.Year || 0;
+                d.Estimated_Household_Contacts = +d.Estimated_Household_Contacts || 0;
+                d.Prev_Treatment_Contacts_Pct = +d.Prev_Treatment_Contacts_Pct || 0;
+                d.Prev_Treatment_Kids_Pct = +d.Prev_Treatment_Kids_Pct || 0;
+            });
+
+            const countries = Array.from(new Set(data.map(d => d.Country)));
+            const countryFilter = d3.select("#countryFilterBar");
+            countries.forEach(country => {
+                countryFilter.append("option").text(country).attr("value", country);
+            });
+
+            const colorScale = d3.scaleSequential(d3.interpolateBlues)
+                .domain([0, data.length]);
+
+            function renderChart(filteredData, metric) {
+                svgBar.selectAll("*").remove();
+
+                if (filteredData.length === 0) {
+                    console.warn("No data available for the selected filter");
+                    return;
+                }
+
+                if (!filteredData.some(d => typeof d[metric] === "number" && !isNaN(d[metric]) && d[metric] > 0)) {
+                    console.warn(`No valid data found for metric: ${metric}`);
+                    return;
+                }
+
+                const x = d3.scaleBand()
+                    .domain(filteredData.map(d => d.Year))
+                    .range([margin.left, widthBar - margin.right])
+                    .padding(0.2);
+
+                const maxValue = d3.max(filteredData, d => d[metric]) || 0;
+                const y = d3.scaleLinear()
+                    .domain([0, maxValue])
+                    .nice()
+                    .range([heightBar - margin.bottom, margin.top]);
+
+                svgBar.append("g")
+                    .attr("transform", `translate(0,${heightBar - margin.bottom})`)
+                    .call(d3.axisBottom(x).tickFormat(d3.format("d")))
+                    .attr("font-size", "12px");
+
+                svgBar.append("g")
+                    .attr("transform", `translate(${margin.left},0)`)
+                    .call(d3.axisLeft(y))
+                    .attr("font-size", "12px");
+
+                svgBar.selectAll(".bar")
+                    .data(filteredData)
+                    .join("rect")
+                    .attr("class", "bar")
+                    .attr("x", d => x(d.Year))
+                    .attr("y", d => y(d[metric]))
+                    .attr("width", x.bandwidth())
+                    .attr("height", d => heightBar - margin.bottom - y(d[metric]))
+                    .attr("fill", (d, i) => colorScale(i))
+                    .on("mouseover", function (event, d) {
+                        tooltip.style("opacity", 1)
+                            .html(`<strong>${d.Country} (${d.Year})</strong><br>${metric}: ${d[metric].toFixed(2)}`)
+                            .style("left", (event.pageX + 10) + "px")
+                            .style("top", (event.pageY - 28) + "px");
+                    })
+                    .on("mouseout", function () {
+                        tooltip.style("opacity", 0);
+                    })
+                    .on("click", function (event, d) {
+                        updateSelectedCountry(d.Country === selectedCountry ? null : d.Country);
+                    });
+
+                window.addEventListener('countrySelected', (e) => {
+                    const country = e.detail;
+                    svgBar.selectAll(".bar")
+                        .attr("opacity", d => (country === null || d.Country === country) ? 1 : 0.3);
+                });
+            }
+
+            renderChart(data, "Estimated_Household_Contacts");
+
+            d3.select("#countryFilterBar").on("change", function () {
+                const selectedCountry = this.value;
+                const selectedMetric = d3.select("#metricFilter").property("value");
+                const filteredData = selectedCountry === "All" ? data : data.filter(d => d.Country === selectedCountry);
+                renderChart(filteredData, selectedMetric);
+            });
+
+            d3.select("#metricFilter").on("change", function () {
+                const selectedCountry = d3.select("#countryFilterBar").property("value");
+                const selectedMetric = this.value;
+                const filteredData = selectedCountry === "All" ? data : data.filter(d => d.Country === selectedCountry);
+                const sortedData = filteredData.sort((a, b) => b[selectedMetric] - a[selectedMetric]);
+                renderChart(sortedData, selectedMetric);
+            });
+
+        }).catch(error => {
+            console.error("Error loading or processing data:", error);
+        });
+    </script>
+</body>
+</html>
